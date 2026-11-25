@@ -1,0 +1,33 @@
+raw_videos_dir: data/raw_videos
+clips_dir: data/clips
+filtered_manifest: data/manifest_filtered.jsonl
+captioned_manifest: data/manifest_captioned.jsonl
+cache_dir: data/cached_480p
+model_config: configs/model_vieth3_mini_500m.yaml
+
+scene_split:
+  fps: 24
+  grid: h3
+  target_frames: [56, 73, 90, 124]
+  threshold: 27.0
+
+filters:
+  min_width: 256
+  min_height: 256
+  min_frames: 22
+  min_sharpness: 40.0
+  min_motion: 0.25
+  max_motion: 25.0
+  max_overlay_score: 0.22
+
+recaption_vi:
+  api_base: http://localhost:8000/v1
+  model: Qwen/Qwen2.5-VL-7B-Instruct
+  num_frames: 6
+
+cache_latents:
+  vae_type: h3
+  text_encoder: qwen25vl
+  bucket_stage: 480p
+  shard_size: 64
+  dtype: bfloat16

@@ -1,0 +1,19 @@
+name: vieth3-tiktok-9x16-mini
+in_channels: 16
+patch_size: [1, 2, 2]
+hidden_size: 1152
+num_layers: 16
+num_refiner_layers: 2
+num_attention_heads: 9
+attention_head_dim: 128
+ffn_dim: 3072
+text_dim: 3584
+max_text_len: 256
+rope_theta: 10000.0
+qk_norm: true
+vae_type: wan21
+vae_spatial_stride: 8
+vae_temporal_stride: 4
+use_i2v_cond: true
+use_pose_cond: false
+pose_channels: 16

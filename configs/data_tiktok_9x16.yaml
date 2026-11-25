@@ -1,0 +1,36 @@
+raw_videos_dir: data/raw_tiktok
+clips_dir: data/clips_tiktok
+filtered_manifest: data/manifest_tiktok_filtered.jsonl
+captioned_manifest: data/manifest_tiktok_captioned.jsonl
+cache_dir: data/cached_tiktok_720p
+model_config: configs/model_vieth3_tiktok_9x16_mini.yaml
+
+scene_split:
+  fps: 24
+  grid: wan21
+  target_frames: [49, 65, 81, 121]
+  threshold: 27.0
+
+filters:
+  min_width: 540
+  min_height: 960
+  min_frames: 21
+  min_sharpness: 40.0
+  min_motion: 0.35
+  max_motion: 18.0
+  max_overlay_score: 0.18
+  require_portrait: true
+  max_bg_motion: 0.25
+  min_fg_motion: 1.0
+  max_flicker: 12.0
+
+pose_extract:
+  backend: mediapipe
+
+cache_latents:
+  vae_type: wan21
+  vae_id: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+  text_encoder: qwen25vl
+  bucket_stage: 720p
+  shard_size: 32
+  dtype: bfloat16

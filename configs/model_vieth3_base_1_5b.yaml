@@ -1,0 +1,16 @@
+name: vieth3-base-2xh100
+in_channels: 24
+patch_size: [1, 2, 2]
+hidden_size: 1536
+num_layers: 24
+num_refiner_layers: 2
+num_attention_heads: 12
+attention_head_dim: 128
+ffn_dim: 4096
+text_dim: 3584
+max_text_len: 256
+rope_theta: 10000.0
+qk_norm: true
+vae_type: h3
+vae_spatial_stride: 16
+vae_temporal_stride: 4

@@ -1,0 +1,16 @@
+name: vieth3-debug-20m
+in_channels: 24
+patch_size: [1, 2, 2]
+hidden_size: 256
+num_layers: 4
+num_refiner_layers: 2
+num_attention_heads: 4
+attention_head_dim: 64
+ffn_dim: 768
+text_dim: 3584
+max_text_len: 64
+rope_theta: 10000.0
+qk_norm: true
+vae_type: dummy
+vae_spatial_stride: 16
+vae_temporal_stride: 4
