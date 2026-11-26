@@ -17,6 +17,6 @@ i2v_dropout: 0.1
 pose_dropout: 0.15
 use_ema: false
 log_every: 25
-save_every: 2500
+save_every: 1000
 num_workers: 4
 seed: 42

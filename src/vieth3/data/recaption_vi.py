@@ -25,24 +25,98 @@ VIETNAMESE_CAPTION_SYSTEM_PROMPT = (
 )
 
 
-def sample_keyframes_base64(video_path: str | Path, num_frames: int = 6) -> list[str]:
-    """Sample evenly spaced JPEG base64 frames from a video clip."""
+def _sample_keyframes_bgr(
+    video_path: str | Path,
+    num_frames: int = 6,
+    max_side: Optional[int] = None,
+) -> list[np.ndarray]:
+    """Sample evenly spaced BGR frames from a video clip, optionally downscaling."""
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     indices = np.linspace(0, max(0, total - 1), max(1, num_frames), dtype=int)
-    encoded: list[str] = []
+    frames: list[np.ndarray] = []
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
         if not ok:
             continue
+        if max_side is not None and max(frame.shape[:2]) > max_side:
+            scale = max_side / float(max(frame.shape[:2]))
+            new_w = max(1, int(round(frame.shape[1] * scale)))
+            new_h = max(1, int(round(frame.shape[0] * scale)))
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        frames.append(frame)
+    cap.release()
+    return frames
+
+
+def sample_keyframes_base64(video_path: str | Path, num_frames: int = 6) -> list[str]:
+    """Sample evenly spaced JPEG base64 frames from a video clip."""
+    encoded: list[str] = []
+    for frame in _sample_keyframes_bgr(video_path, num_frames=num_frames):
         ok_jpg, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
         if ok_jpg:
             encoded.append(base64.b64encode(buf.tobytes()).decode("ascii"))
-    cap.release()
     return encoded
+
+
+def sample_keyframes_pil(video_path: str | Path, num_frames: int = 6, max_side: int = 640):
+    """Sample evenly spaced RGB PIL Images from a video clip."""
+    from PIL import Image
+
+    images = []
+    for frame in _sample_keyframes_bgr(video_path, num_frames=num_frames, max_side=max_side):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        images.append(Image.fromarray(rgb))
+    return images
+
+
+class _LocalQwenVLCaptioner:
+    """Lazy-loaded local Transformers Qwen2.5-VL captioner for offline cluster runs."""
+
+    def __init__(self, model_id: str = "Qwen/Qwen2.5-VL-7B-Instruct") -> None:
+        import torch
+        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_id,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+        self.model.eval()
+
+    def caption(self, video_path: str | Path, num_frames: int = 6) -> str:
+        """Caption one video clip using local Qwen2.5-VL inference."""
+        import torch
+
+        frames = sample_keyframes_pil(video_path, num_frames=num_frames, max_side=640)
+        if not frames:
+            raise RuntimeError(f"No frames extracted from {video_path}")
+
+        user_content: list[dict] = [{"type": "image"} for _ in frames]
+        user_content.append(
+            {"type": "text", "text": "Hãy mô tả chi tiết đoạn video này theo hướng dẫn."}
+        )
+        messages = [
+            {"role": "system", "content": VIETNAMESE_CAPTION_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+        prompt = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self.processor(
+            text=[prompt], images=frames, padding=True, return_tensors="pt"
+        ).to(self.model.device)
+        with torch.inference_mode():
+            generated_ids = self.model.generate(
+                **inputs, max_new_tokens=256, do_sample=False
+            )
+        prompt_len = inputs["input_ids"].shape[1]
+        trimmed = generated_ids[:, prompt_len:]
+        return str(self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]).strip()
 
 
 def caption_clip_vlm(
@@ -92,6 +166,7 @@ def recaption_manifest(
     api_key: str = "EMPTY",
     num_frames: int = 6,
     dry_run: bool = False,
+    backend: str = "api",
 ) -> list[dict]:
     """Generate native Vietnamese captions for every clip in a JSONL manifest."""
     entries: list[dict] = []
@@ -103,9 +178,11 @@ def recaption_manifest(
     out_path = Path(output_manifest)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     captioned: list[dict] = []
+    local_captioner: Optional[_LocalQwenVLCaptioner] = None
+    total = len(entries)
 
     with open(out_path, "w", encoding="utf-8") as out_f:
-        for entry in entries:
+        for idx, entry in enumerate(entries, start=1):
             clip_path = Path(entry["path"])
             txt_path = clip_path.with_suffix(".txt")
             if entry.get("caption"):
@@ -117,6 +194,10 @@ def recaption_manifest(
                     "Cảnh quay đường phố Việt Nam vào ban ngày với chuyển động tự nhiên, "
                     "ánh sáng dịu nhẹ và góc máy ổn định."
                 )
+            elif backend == "local":
+                if local_captioner is None:
+                    local_captioner = _LocalQwenVLCaptioner(model_id=model)
+                caption = local_captioner.caption(clip_path, num_frames=num_frames)
             else:
                 caption = caption_clip_vlm(
                     clip_path,
@@ -130,6 +211,9 @@ def recaption_manifest(
             updated = {**entry, "caption": caption, "caption_path": str(txt_path.resolve())}
             captioned.append(updated)
             out_f.write(json.dumps(updated, ensure_ascii=False) + "\n")
+            out_f.flush()
+            if idx % 10 == 0 or idx == total:
+                print(f"[recaption_vi] {idx}/{total} clips captioned", flush=True)
 
     return captioned
 
@@ -138,6 +222,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Vietnamese VLM recaptioning for video clips.")
     parser.add_argument("--manifest", required=True, help="Input filtered JSONL manifest.")
     parser.add_argument("--output", required=True, help="Output captioned JSONL manifest.")
+    parser.add_argument("--backend", choices=["api", "local"], default="api")
     parser.add_argument("--api-base", default="http://localhost:8000/v1")
     parser.add_argument("--model", default="Qwen/Qwen2.5-VL-7B-Instruct")
     parser.add_argument("--api-key", default="EMPTY")
@@ -153,6 +238,7 @@ def main() -> None:
         api_key=args.api_key,
         num_frames=args.num_frames,
         dry_run=args.dry_run,
+        backend=args.backend,
     )
     print(f"Captioned {len(rows)} clips -> {args.output}")
 

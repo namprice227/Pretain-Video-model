@@ -6,6 +6,9 @@ WORK_DIR="${2:-data/tiktok_work}"
 MODEL_CFG="${3:-configs/model_vieth3_tiktok_9x16_mini.yaml}"
 BUCKET_STAGE="${4:-480p}" # 480p or 720p
 WITH_POSE="${WITH_POSE:-0}"
+SKIP_FILTER="${SKIP_FILTER:-1}"
+RECAPTION_BACKEND="${RECAPTION_BACKEND:-local}"
+CACHE_DIR="${CACHE_DIR:-data/cached_tiktok_${BUCKET_STAGE}}"
 VLM_API="${VLM_API:-http://localhost:8000/v1}"
 VLM_MODEL="${VLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}"
 
@@ -22,20 +25,24 @@ python -m vieth3.data.scene_split \
   --grid wan21 \
   --target-frames 49 65 81 121
 
-echo "[3/6] Filtering for 9:16 portrait, tripod-locked background, zero flicker/glow..."
-python -m vieth3.data.filters \
-  --input "${WORK_DIR}/clips/manifest_clips.jsonl" \
-  --output "${WORK_DIR}/manifest_filtered.jsonl" \
-  --min-width 480 \
-  --min-height 832 \
-  --min-frames 21 \
-  --require-portrait \
-  --max-bg-motion 0.25 \
-  --min-fg-motion 1.0 \
-  --max-flicker 12.0 \
-  --max-overlay-score 0.18
-
-FILTERED_MANIFEST="${WORK_DIR}/manifest_filtered.jsonl"
+if [ "${SKIP_FILTER}" = "1" ]; then
+  echo "[3/6] Skipping heuristic filter (SKIP_FILTER=1; using visually curated clips directly)."
+  FILTERED_MANIFEST="${WORK_DIR}/clips/manifest_clips.jsonl"
+else
+  echo "[3/6] Filtering for 9:16 portrait, tripod-locked background, zero flicker/glow..."
+  python -m vieth3.data.filters \
+    --input "${WORK_DIR}/clips/manifest_clips.jsonl" \
+    --output "${WORK_DIR}/manifest_filtered.jsonl" \
+    --min-width 480 \
+    --min-height 832 \
+    --min-frames 21 \
+    --require-portrait \
+    --max-bg-motion 0.25 \
+    --min-fg-motion 1.0 \
+    --max-flicker 12.0 \
+    --max-overlay-score 0.18
+  FILTERED_MANIFEST="${WORK_DIR}/manifest_filtered.jsonl"
+fi
 
 if [ "${WITH_POSE}" = "1" ]; then
   echo "[4/6] Extracting MediaPipe body + hand pose skeletons..."
@@ -49,17 +56,18 @@ else
   echo "[4/6] Skipping pose extraction (set WITH_POSE=1 to enable)."
 fi
 
-echo "[5/6] Recaptioning dance clips in native Vietnamese..."
+echo "[5/6] Recaptioning dance clips in native Vietnamese (backend=${RECAPTION_BACKEND})..."
 python -m vieth3.data.recaption_vi \
   --manifest "${FILTERED_MANIFEST}" \
   --output "${WORK_DIR}/manifest_captioned.jsonl" \
+  --backend "${RECAPTION_BACKEND}" \
   --api-base "${VLM_API}" \
   --model "${VLM_MODEL}"
 
 echo "[6/6] Caching Wan2.1-VAE (float32, deterministic) + Qwen Vietnamese embeddings..."
 python -m vieth3.data.cache_latents \
   --manifest "${WORK_DIR}/manifest_captioned.jsonl" \
-  --output-dir "${WORK_DIR}/cached_${BUCKET_STAGE}" \
+  --output-dir "${CACHE_DIR}" \
   --model-config "${MODEL_CFG}" \
   --vae-type wan21 \
   --vae-id Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -68,4 +76,4 @@ python -m vieth3.data.cache_latents \
   --device cuda \
   --dtype bfloat16
 
-echo "Done! Cached TikTok dataset ready at ${WORK_DIR}/cached_${BUCKET_STAGE}/index.jsonl"
+echo "Done! Cached TikTok dataset ready at ${CACHE_DIR}/index.jsonl"
