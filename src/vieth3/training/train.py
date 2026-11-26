@@ -183,6 +183,7 @@ def train(cfg: dict[str, Any]) -> dict[str, Any]:
         i2v_dropout=float(cfg.get("i2v_dropout", 0.1)),
         pose_dropout=float(cfg.get("pose_dropout", 0.15)),
         seed=seed,
+        max_t_lat=cfg.get("max_t_lat"),
     )
     batch_size = int(cfg.get("batch_size", 1))
     sampler = BucketBatchSampler(
@@ -288,7 +289,10 @@ def train(cfg: dict[str, Any]) -> dict[str, Any]:
                     }
                     with open(metrics_file, "a", encoding="utf-8") as mf:
                         mf.write(json.dumps(row) + "\n")
-                    print(f"[step {step:06d}/{max_steps}] loss={accum_loss:.5f} lr={lr:.2e} ({elapsed:.1f}s)")
+                    print(
+                        f"[step {step:06d}/{max_steps}] loss={accum_loss:.5f} lr={lr:.2e} ({elapsed:.1f}s)",
+                        flush=True,
+                    )
 
                 if save_every > 0 and (step % save_every == 0 or step == max_steps):
                     _save_checkpoint(out_dir, step, model, optimizer, ema, strategy, rank)
@@ -316,6 +320,8 @@ def main() -> None:
     parser.add_argument("--model-config", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--warmup-steps", type=int, default=None)
+    parser.add_argument("--max-t-lat", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--grad-accum", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
@@ -332,6 +338,8 @@ def main() -> None:
         "model_config",
         "output_dir",
         "max_steps",
+        "warmup_steps",
+        "max_t_lat",
         "batch_size",
         "grad_accum",
         "lr",

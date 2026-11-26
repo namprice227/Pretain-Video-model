@@ -6,7 +6,7 @@ import json
 import random
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 import torch
 from safetensors import safe_open
@@ -24,12 +24,14 @@ class CachedLatentDataset(Dataset):
         i2v_dropout: float = 0.1,
         pose_dropout: float = 0.15,
         seed: int = 42,
+        max_t_lat: Optional[int] = None,
     ) -> None:
         self.index_path = Path(index_path)
         self.root_dir = self.index_path.parent
         self.cfg_dropout = cfg_dropout
         self.i2v_dropout = i2v_dropout
         self.pose_dropout = pose_dropout
+        self.max_t_lat = int(max_t_lat) if max_t_lat is not None else None
         self.rng = random.Random(seed)
         self.samples: list[dict] = []
         with open(self.index_path, "r", encoding="utf-8") as f:
@@ -44,7 +46,10 @@ class CachedLatentDataset(Dataset):
 
     def get_bucket_key(self, idx: int) -> tuple[int, int, int]:
         s = self.samples[idx]
-        return (int(s["t_lat"]), int(s["h_lat"]), int(s["w_lat"]))
+        t_lat = int(s["t_lat"])
+        if self.max_t_lat is not None:
+            t_lat = min(t_lat, self.max_t_lat)
+        return (t_lat, int(s["h_lat"]), int(s["w_lat"]))
 
     def __getitem__(self, idx: int) -> dict[str, Tensor]:
         item = self.samples[idx]
@@ -65,6 +70,11 @@ class CachedLatentDataset(Dataset):
                 if f"{key}.pose_latent" in avail_keys
                 else None
             )
+
+        if self.max_t_lat is not None and latent.shape[1] > self.max_t_lat:
+            latent = latent[:, : self.max_t_lat].contiguous()
+            if pose_latent is not None and pose_latent.shape[1] > self.max_t_lat:
+                pose_latent = pose_latent[:, : self.max_t_lat].contiguous()
 
         if self.cfg_dropout > 0.0 and self.rng.random() < self.cfg_dropout:
             text_embeds = torch.zeros_like(text_embeds)

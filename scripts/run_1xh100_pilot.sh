@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PILOT_STEPS="${1:-3000}"
+MAX_T_LAT="${2:-13}"
 
 mkdir -p data/raw_tiktok
 
@@ -34,14 +35,16 @@ echo "[3/5] Running 1x H100 pre-flight & 10-minute verification gate..."
 python scripts/h100_preflight.py \
   --config configs/model_vieth3_tiktok_9x16_mini.yaml \
   --gpus 1
-NUM_GPUS=1 bash scripts/verify_pipeline.sh data/cached_tiktok_480p/index.jsonl 300
+NUM_GPUS=1 bash scripts/verify_pipeline.sh data/cached_tiktok_480p/index.jsonl 300 "${MAX_T_LAT}"
 
-echo "[4/5] Launching 1x H100 pilot training (${PILOT_STEPS} steps)..."
+echo "[4/5] Launching 1x H100 pilot training (${PILOT_STEPS} steps, max_t_lat=${MAX_T_LAT})..."
 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
 TOKENIZERS_PARALLELISM=false \
+PYTHONUNBUFFERED=1 \
 python -m vieth3.training.train \
   --config configs/train_tiktok_9x16_480p.yaml \
   --strategy single \
+  --max-t-lat "${MAX_T_LAT}" \
   --max-steps "${PILOT_STEPS}"
 
 echo "[5/5] Generating final pilot sample from latest checkpoint..."
