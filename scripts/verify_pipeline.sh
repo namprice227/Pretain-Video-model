@@ -3,6 +3,7 @@ set -euo pipefail
 
 CACHE_INDEX="${1:-data/cached_tiktok_480p/index.jsonl}"
 STEPS="${2:-300}"
+NUM_GPUS="${NUM_GPUS:-$(python -c 'import torch; print(max(1, torch.cuda.device_count()))')}"
 
 if [ ! -f "${CACHE_INDEX}" ]; then
   echo "ERROR: Cache index not found at ${CACHE_INDEX}" >&2
@@ -76,13 +77,24 @@ out_mp4 = write_video_mp4(video_u8, "outputs/verify/vae_roundtrip.mp4", fps=24)
 print(f"VAE round-trip saved to {out_mp4} (source={meta['source_path']})")
 PY
 
-echo "[2/3] Running ${STEPS}-step 4-clip overfit on 2x H100 (FSDP + BF16)..."
-bash scripts/run_2xh100_train.sh configs/train_tiktok_9x16_480p.yaml \
-  --cache-index outputs/verify/verify_4clip_index.jsonl \
-  --output-dir outputs/verify_overfit \
-  --max-steps "${STEPS}" \
-  --batch-size 2 \
-  --grad-accum 1
+echo "[2/3] Running ${STEPS}-step 4-clip overfit on ${NUM_GPUS} GPU(s) (BF16)..."
+if [ "${NUM_GPUS}" -le 1 ]; then
+  PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" python -m vieth3.training.train \
+    --config configs/train_tiktok_9x16_480p.yaml \
+    --strategy single \
+    --cache-index outputs/verify/verify_4clip_index.jsonl \
+    --output-dir outputs/verify_overfit \
+    --max-steps "${STEPS}" \
+    --batch-size 2 \
+    --grad-accum 1
+else
+  bash scripts/run_2xh100_train.sh configs/train_tiktok_9x16_480p.yaml \
+    --cache-index outputs/verify/verify_4clip_index.jsonl \
+    --output-dir outputs/verify_overfit \
+    --max-steps "${STEPS}" \
+    --batch-size 2 \
+    --grad-accum 1
+fi
 
 echo "[3/3] Sampling from overfit checkpoint..."
 CKPT=$(cat outputs/verify_overfit/checkpoints/latest)
